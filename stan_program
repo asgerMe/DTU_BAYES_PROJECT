@@ -1,0 +1,78 @@
+model_code = """
+data {
+  int<lower=1> N1;
+  int<lower=1> N2;
+  real<lower=0> sigma_std;
+  real<lower=0> alpha_std;
+  real<lower=0> length_scale;
+  int<lower=0> kernel;
+  vector[N1] y;
+  matrix<lower=0>[N1+N2, N1+N2] DS_MATRIX;
+  matrix<lower=0>[N1+N2, N1+N2] DE_MATRIX;
+}
+transformed data {
+  int<lower=1> N = N1 + N2;
+}
+parameters {
+  real<lower=0.1, upper=2> sigma;  
+  real<lower=0.2, upper=6> alpha;    
+  real<lower=0.05, upper=15> rho;
+  vector[N] eta;
+}
+
+transformed parameters {
+  vector[N] f;
+  matrix[N, N] L_K;
+  matrix[N, N] K;
+  real sq_alpha = square(alpha);
+  real sq_rho = square(rho);
+  real delta = 0.000001;   
+  for (i in 1:(N - 1)) {
+  
+    K[i, i] = 2*sq_alpha + delta;
+    for (j in (i + 1):N) {
+      if(kernel==0){
+        K[i, j] = square(alpha)*(exp( -0.5*square(DS_MATRIX[i, j]) / sq_rho) + exp( -0.5*square(DE_MATRIX[i, j]) / sq_rho));
+      }
+      if(kernel==1){
+        K[i, j] = sq_alpha*(1 + sqrt(3)*DS_MATRIX[i, j]/(rho))*exp(-sqrt(3)*DS_MATRIX[i, j]/(rho));
+        K[i, j] += square(alpha)*(1 + sqrt(3)*DE_MATRIX[i, j]/(rho))*exp(-sqrt(3)*DE_MATRIX[i, j]/(rho));
+        }
+       if(kernel==2){
+        K[i, j] = square(alpha)*( 1 + sqrt(5)*DS_MATRIX[i, j]/(rho) + 5*square(DS_MATRIX[i, j])/(5*square(2*square(rho)))) * exp(-sqrt(5)*DS_MATRIX[i, j]/(2*square(rho)));
+        K[i, j] += square(alpha)*( 1 + sqrt(5)*DE_MATRIX[i, j]/(rho) + 5*square(DE_MATRIX[i, j])/(5*square(2*square(rho)))) * exp(-sqrt(5)*DE_MATRIX[i, j]/(2*square(rho)));
+        }       
+             
+      K[j, i] = K[i, j];
+    }
+  }
+  K[N, N] = 2*sq_alpha + delta;
+  L_K = cholesky_decompose(K);
+  f = L_K*eta;
+}
+
+model {
+  sigma ~ normal(0.1, sigma_std);
+  alpha ~ normal(0, alpha_std);
+  rho ~ normal(0, length_scale);  
+  eta ~ std_normal();
+  y ~ normal(f[1:N1], sigma);
+}
+
+generated quantities {
+  vector[N2] y2;
+  vector[N1] log_like;
+  
+  for (n2 in 1:N2)
+    y2[n2] = normal_rng(f[N1 + n2], sigma);
+    
+  for (n1 in 1:N1)
+    log_like[n1] = normal_lpdf(y[n1] | f[n1], sigma);
+}
+
+"""
+model = pystan.StanModel(model_code=model_code)
+with open('./CompiledModels/prior.pkl', 'wb') as f:
+    pickle.dump(model, f)
+
+print('DONE')
